@@ -1,0 +1,408 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for MWAA (Managed Airflow) Environment'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: 'smc-airflow-env'
+    Description: 'Name of the MWAA environment'
+  
+  DagS3Path:
+    Type: String
+    Default: 'dags'
+    Description: 'S3 path for DAGs folder'
+  
+  AirflowVersion:
+    Type: String
+    Default: '2.7.2'
+    AllowedValues:
+      - '2.7.2'
+      - '2.6.3'
+      - '2.5.1'
+    Description: 'Apache Airflow version'
+  
+  MaxWorkers:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 25
+    Description: 'Maximum number of workers'
+  
+  MinWorkers:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 25
+    Description: 'Minimum number of workers'
+
+Resources:
+  # S3 Bucket for MWAA
+  MWAABucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvironmentName}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # VPC for MWAA
+  MWAAVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.192.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-vpc'
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-igw'
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref MWAAVpc
+
+  # Public Subnet 1
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MWAAVpc
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.192.10.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-public-subnet-1'
+
+  # Public Subnet 2
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MWAAVpc
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.192.11.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-public-subnet-2'
+
+  # Private Subnet 1
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MWAAVpc
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.192.20.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-private-subnet-1'
+
+  # Private Subnet 2
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MWAAVpc
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.192.21.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-private-subnet-2'
+
+  # NAT Gateway EIP 1
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  # NAT Gateway EIP 2
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  # NAT Gateway 1
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-nat-1'
+
+  # NAT Gateway 2
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-nat-2'
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MWAAVpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-public-routes'
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  # Private Route Table 1
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MWAAVpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-private-routes-1'
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  # Private Route Table 2
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MWAAVpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-private-routes-2'
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  # S3 VPC Endpoint (Gateway Endpoint - No additional cost)
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref MWAAVpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+
+  # Security Group for MWAA
+  MWAASecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${EnvironmentName}-sg'
+      GroupDescription: Security group for MWAA environment
+      VpcId: !Ref MWAAVpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-sg'
+
+  MWAASecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MWAASecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref MWAASecurityGroup
+
+  # IAM Role for MWAA
+  MWAAExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - airflow-env.amazonaws.com
+                - airflow.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /service-role/
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+      Policies:
+        - PolicyName: MWAAExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject*'
+                  - 's3:GetBucket*'
+                  - 's3:List*'
+                Resource:
+                  - !Sub '${MWAABucket.Arn}'
+                  - !Sub '${MWAABucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+                Resource:
+                  - !Sub '${MWAABucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:CreateLogGroup'
+                  - 'logs:PutLogEvents'
+                  - 'logs:GetLogEvents'
+                  - 'logs:GetLogRecord'
+                  - 'logs:GetLogGroupFields'
+                  - 'logs:GetQueryResults'
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:airflow-${EnvironmentName}-*'
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'sqs:ChangeMessageVisibility'
+                  - 'sqs:DeleteMessage'
+                  - 'sqs:GetQueueAttributes'
+                  - 'sqs:GetQueueUrl'
+                  - 'sqs:ReceiveMessage'
+                  - 'sqs:SendMessage'
+                Resource:
+                  - !Sub 'arn:aws:sqs:${AWS::Region}:*:airflow-celery-*'
+              - Effect: Allow
+                Action:
+                  - 'kms:Decrypt'
+                  - 'kms:DescribeKey'
+                  - 'kms:GenerateDataKey*'
+                  - 'kms:Encrypt'
+                NotResource: !Sub 'arn:aws:kms:*:${AWS::AccountId}:key/*'
+                Condition:
+                  StringLike:
+                    'kms:ViaService':
+                      - !Sub 'sqs.${AWS::Region}.amazonaws.com'
+
+  # MWAA Environment
+  MWAAEnvironment:
+    Type: AWS::MWAA::Environment
+    DependsOn:
+      - MWAASecurityGroupIngress
+    Properties:
+      Name: !Ref EnvironmentName
+      AirflowVersion: !Ref AirflowVersion
+      SourceBucketArn: !GetAtt MWAABucket.Arn
+      ExecutionRoleArn: !GetAtt MWAAExecutionRole.Arn
+      DagS3Path: !Ref DagS3Path
+      # RequirementsS3Path: 'requirements.txt'  # Commented out - add via stack update after uploading file
+      NetworkConfiguration:
+        SecurityGroupIds:
+          - !Ref MWAASecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      WebserverAccessMode: PUBLIC_ONLY
+      MaxWorkers: !Ref MaxWorkers
+      MinWorkers: !Ref MinWorkers
+      EnvironmentClass: 'mw1.small'
+      LoggingConfiguration:
+        DagProcessingLogs:
+          Enabled: true
+          LogLevel: INFO
+        SchedulerLogs:
+          Enabled: true
+          LogLevel: INFO
+        TaskLogs:
+          Enabled: true
+          LogLevel: INFO
+        WebserverLogs:
+          Enabled: true
+          LogLevel: INFO
+        WorkerLogs:
+          Enabled: true
+          LogLevel: INFO
+      AirflowConfigurationOptions:
+        core.default_timezone: 'America/Los_Angeles'
+        core.load_examples: 'False'
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref MWAAVpc
+    Export:
+      Name: !Sub '${EnvironmentName}-VPCId'
+
+  MWAABucketName:
+    Description: S3 Bucket for MWAA
+    Value: !Ref MWAABucket
+    Export:
+      Name: !Sub '${EnvironmentName}-BucketName'
+
+  MWAAEnvironmentName:
+    Description: MWAA Environment Name
+    Value: !Ref MWAAEnvironment
+    Export:
+      Name: !Sub '${EnvironmentName}-Name'
+
+  MWAAWebServerUrl:
+    Description: MWAA Web Server URL
+    Value: !GetAtt MWAAEnvironment.WebserverUrl
+    Export:
+      Name: !Sub '${EnvironmentName}-WebServerUrl'
+
+  MWAAExecutionRoleArn:
+    Description: MWAA Execution Role ARN
+    Value: !GetAtt MWAAExecutionRole.Arn
+    Export:
+      Name: !Sub '${EnvironmentName}-ExecutionRoleArn'
+
+  DeployCommand:
+    Description: Command to deploy DAGs to S3
+    Value: !Sub 'aws s3 sync ./dags s3://${MWAABucket}/dags/ --delete --exclude "__pycache__/*" --exclude "*.pyc"'
