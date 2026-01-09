@@ -341,7 +341,7 @@ Resources:
       SourceBucketArn: !GetAtt MWAABucket.Arn
       ExecutionRoleArn: !GetAtt MWAAExecutionRole.Arn
       DagS3Path: !Ref DagS3Path
-      # RequirementsS3Path: 'requirements.txt'  # Commented out - add via stack update after uploading file
+      RequirementsS3Path: 'requirements.txt'  # Commented out - add via stack update after uploading file
       NetworkConfiguration:
         SecurityGroupIds:
           - !Ref MWAASecurityGroup

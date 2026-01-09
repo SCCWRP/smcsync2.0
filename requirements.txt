@@ -2,3 +2,6 @@ beautifulsoup4
 boto3
 pandas
 requests
+pyarrow
+psycopg2-binary
+sqlalchemy

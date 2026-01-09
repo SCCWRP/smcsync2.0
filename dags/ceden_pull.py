@@ -1,11 +1,13 @@
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from datetime import datetime
 import boto3
 import requests
 import zipfile
 import io, os, sys
 import pandas as pd
 from utils.scrape import scrape_href_from_url
-from dotenv import load_dotenv
-load_dotenv()
+
 
 def data_ca_gov_to_sccwrp_s3():
     
@@ -34,10 +36,33 @@ def data_ca_gov_to_sccwrp_s3():
                 with zip_file.open(parquet_filename) as parquet_file:
                     s3_client.upload_fileobj(
                         parquet_file,
-                        os.getenv('CEDEN_RAW_DATA_BUCKET'),
+                        'ceden-raw-data',
                         f'{dtype}/{parquet_filename}'
                     )
                 print(f"Uploaded {parquet_filename} to S3")
 
-if __name__ == "__main__":
-    data_ca_gov_to_sccwrp_s3()
+# Define the DAG
+with DAG(
+    dag_id="ceden_data_pull",
+    start_date=datetime(2025, 1, 1),
+    schedule_interval="@daily",  # Run daily, adjust as needed
+    catchup=False,
+    tags=["smc", "data-ingestion", "ceden"],
+    description="Pull CEDEN data from data.ca.gov and upload to S3"
+) as dag:
+    
+    # Create the data pull task
+    pull_ceden_data = PythonOperator(
+        task_id="pull_ceden_data",
+        python_callable=data_ca_gov_to_sccwrp_s3,
+        doc_md="""
+        ### Pull CEDEN Data Task
+        
+        This task downloads benthic data from the California Open Data Portal
+        and uploads it to the S3 bucket for further processing.
+        
+        - Source: data.ca.gov CEDEN dataset
+        - Destination: S3 bucket 'ceden-raw-data'
+        - Format: Parquet files
+        """
+    )
