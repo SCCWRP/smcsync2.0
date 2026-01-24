@@ -1,45 +1,11 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
-import boto3
-import requests
-import zipfile
-import io, os, sys
-import pandas as pd
-from utils.scrape import scrape_href_from_url
+
+# Technically, it pulls data from data.ca.gov. But we typically refer to it as CEDEN data, since CEDEN uploads their data there.
+from utils.scrape import ceden2s3
 
 
-def data_ca_gov_to_sccwrp_s3():
-    
-    urls = {
-        'benthic': 'https://data.ca.gov/dataset/c14a017a-8a8c-42f7-a078-3ab64a873e32/resource/eb61f9a1-b1c6-4840-99c7-420a2c494a43'
-    }
-
-    for dtype, url in urls.items():
-        print("Fetching download link...")
-        link = scrape_href_from_url(url)
-        print("Got the download link:", link)
-
-        # Download ZIP to memory
-        response = requests.get(link, headers = {'User-Agent': 'Mozilla/5.0'})
-        zip_buffer = io.BytesIO(response.content)
-
-
-        s3_client = boto3.client('s3')
-
-        with zipfile.ZipFile(zip_buffer) as zip_file:
-            parquet_filenames = [name for name in zip_file.namelist() if name.endswith('.parquet')]
-            for parquet_filename in parquet_filenames:
-                print("Found parquet file:", parquet_filename)
-            
-                # Read parquet content and upload directly to S3
-                with zip_file.open(parquet_filename) as parquet_file:
-                    s3_client.upload_fileobj(
-                        parquet_file,
-                        'ceden-raw-data',
-                        f'{dtype}/{parquet_filename}'
-                    )
-                print(f"Uploaded {parquet_filename} to S3")
 
 # Define the DAG
 with DAG(
@@ -54,7 +20,7 @@ with DAG(
     # Create the data pull task
     pull_ceden_data = PythonOperator(
         task_id="pull_ceden_data",
-        python_callable=data_ca_gov_to_sccwrp_s3,
+        python_callable=ceden2s3,
         doc_md="""
         ### Pull CEDEN Data Task
         
