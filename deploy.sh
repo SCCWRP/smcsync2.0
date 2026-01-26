@@ -51,7 +51,7 @@ upload_dags_and_requirements() {
         --exclude "*.pyc"
 
     echo "Uploading requirements.txt"
-    aws s3 cp requirements.txt "s3://$bucket/requirements.txt"
+    aws s3 cp docker/requirements.txt "s3://$bucket/requirements.txt"
 }
 
 # -----------------------------

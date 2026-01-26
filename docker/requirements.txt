@@ -5,3 +5,5 @@ requests
 pyarrow
 psycopg2-binary
 sqlalchemy
+daft
+ipython
